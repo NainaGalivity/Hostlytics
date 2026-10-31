@@ -1,0 +1,17 @@
+# Secrets: API keys must never reach GitHub
+.env
+.streamlit/secrets.toml
+
+# Virtual environment: recreated from requirements.txt
+.venv/
+
+# Links into .venv, which would be broken on GitHub
+.agents/skills/developing-with-streamlit
+.claude/skills/developing-with-streamlit
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# macOS folder metadata
+.DS_Store

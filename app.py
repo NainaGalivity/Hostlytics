@@ -102,8 +102,7 @@ view = demand.build_calendar_view(
 
 st.title("DemandLens")
 st.subheader(f"{listing['name']}, {listing['neighborhood']}, San Francisco")
-st.badge("Sample data", icon=":material/science:", color="blue")
-st.caption("Shown as if synced from Airbnb. This is not a real Airbnb connection.")
+st.badge("Synced from Airbnb · sample data", icon=":material/sync:", color="blue")
 
 applied_fix = st.session_state.applied_fix
 if applied_fix:

@@ -1,4 +1,5 @@
 import calendar
+from datetime import date
 
 import streamlit as st
 
@@ -24,6 +25,37 @@ def save_edit(night, new_price):
     """Save a hand edit and add it to the top of the edit log."""
     st.session_state.edit_log.insert(0, demand.make_log_entry(night, new_price))
     st.session_state.price_changes[night.date] = {"price": new_price, "source": "host"}
+    st.session_state.form_message = ("success", "Got it. We'll learn from this.")
+
+
+def submit_edit_form(nights_by_day):
+    """Check the form and save it. Runs before the page redraws, so the calendar updates."""
+    picked_date = st.session_state.edit_date
+    new_price = st.session_state.edit_new_price
+
+    if picked_date is None or new_price is None:
+        st.session_state.form_message = ("error", "Pick a date and enter a price.")
+        return
+
+    night = nights_by_day[picked_date.day]
+    if night.booked == "yes":
+        message = f"December {picked_date.day} is booked, so its price can't change."
+        st.session_state.form_message = ("error", message)
+    elif new_price == night.price:
+        message = f"December {picked_date.day} is already {money(new_price)}."
+        st.session_state.form_message = ("error", message)
+    else:
+        save_edit(night, new_price)
+
+
+def reset_demo():
+    """Clear every change so the demo can start over."""
+    st.session_state.price_changes = {}
+    st.session_state.edit_log = []
+    st.session_state.applied_fix = None
+    st.session_state.form_message = None
+    for key in ["edit_date", "edit_new_price"]:
+        st.session_state.pop(key, None)
 
 
 @st.dialog("Edit price")
@@ -90,6 +122,7 @@ st.set_page_config(page_title="DemandLens", layout="wide")
 st.session_state.setdefault("price_changes", {})
 st.session_state.setdefault("edit_log", [])
 st.session_state.setdefault("applied_fix", None)
+st.session_state.setdefault("form_message", None)
 
 listing = demand.load_listing()
 data = demand.load_data()
@@ -156,11 +189,41 @@ for week in weeks:
 if night_to_edit:
     edit_price(night_to_edit)
 
+st.header("Edit a price")
+
+first_open_night = view.loc[view["booked"] == "no", "date"].min().date()
+with st.container(width=480):
+    with st.form("edit_price_form", clear_on_submit=True):
+        date_column, price_column = st.columns(2)
+        date_column.date_input(
+            "Date",
+            value=first_open_night,
+            min_value=date(YEAR, MONTH, 1),
+            max_value=date(YEAR, MONTH, 31),
+            key="edit_date",
+        )
+        price_column.number_input(
+            "New price",
+            min_value=1,
+            max_value=10000,
+            value=None,
+            step=1,
+            placeholder="Example: 250",
+            key="edit_new_price",
+        )
+        st.form_submit_button(
+            "Save price", on_click=submit_edit_form, args=(nights_by_day,)
+        )
+
+    if st.session_state.form_message:
+        kind, message = st.session_state.form_message
+        if kind == "success":
+            st.success(message, icon=":material/check_circle:")
+        else:
+            st.error(message, icon=":material/error:")
+
 st.header("Edit log")
-st.caption(
-    "Each price you change by hand is logged as something we learn from. "
-    "Refreshing the page resets the demo."
-)
+st.caption("Each price you change by hand is logged as something we learn from.")
 
 if st.session_state.edit_log:
     st.dataframe(
@@ -177,3 +240,5 @@ if st.session_state.edit_log:
     )
 else:
     st.caption("No hand edits yet.")
+
+st.button("Reset demo", icon=":material/restart_alt:", on_click=reset_demo)

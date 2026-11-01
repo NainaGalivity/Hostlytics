@@ -91,7 +91,7 @@ def show_night(night):
             st.badge("Open", color="green")
 
 
-st.set_page_config(page_title="DemandLens", layout="wide")
+st.set_page_config(page_title="Hostlitics", layout="wide")
 
 # Saved per visitor, so one person's clicks never change the demo for anyone else.
 st.session_state.setdefault("price_changes", {})
@@ -109,7 +109,7 @@ view = demand.build_calendar_view(
     calendar_2026, events, alerts, st.session_state.price_changes
 )
 
-st.title("DemandLens")
+st.title("Hostlitics")
 st.subheader(f"{listing['name']}, {listing['neighborhood']}, San Francisco")
 st.badge("Synced from Airbnb · sample data", icon=":material/sync:", color="blue")
 

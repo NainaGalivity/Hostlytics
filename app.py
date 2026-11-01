@@ -124,23 +124,28 @@ if applied_fix:
 
 for alert in alerts:
     days = ", ".join(f"{date.day}" for date in alert["dates"])
-    st.warning(
-        f"Last December you marked up {alert['fixed_nights']} nights by "
-        f"{alert['last_year_markup']:.0%} on average for this event. December {days} "
-        f"are open and still near base. Suggested markup: "
-        f"+{alert['suggested_markup']}%. "
-        f"Possible extra revenue: {money(alert['extra_revenue'])}.",
-        title=f"{alert['event_name']} is back and your pricing tool missed it again",
-        icon=":material/lightbulb:",
-    )
-    st.button(
-        f"Apply +{alert['suggested_markup']}%",
-        key=f"apply_{alert['event_name']}",
-        icon=":material/bolt:",
-        type="primary",
-        on_click=apply_fix,
-        args=(alert,),
-    )
+    with st.container(border=True):
+        text_column, button_column = st.columns([5, 1], vertical_alignment="center")
+        text_column.markdown(
+            f":orange[:material/lightbulb:] **{alert['event_name']} is back and "
+            f"your pricing tool missed it again**"
+        )
+        text_column.markdown(
+            f"Last December you marked up {alert['fixed_nights']} nights by "
+            f"{alert['last_year_markup']:.0%} on average for this event. December "
+            f"{days} are open and still near base. Suggested markup: "
+            f"+{alert['suggested_markup']}%. "
+            f"Possible extra revenue: {money(alert['extra_revenue'])}."
+        )
+        button_column.button(
+            f"Apply +{alert['suggested_markup']}%",
+            key=f"apply_{alert['event_name']}",
+            icon=":material/bolt:",
+            type="primary",
+            width="stretch",
+            on_click=apply_fix,
+            args=(alert,),
+        )
 
 st.header("December 2026")
 

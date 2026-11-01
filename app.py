@@ -14,10 +14,10 @@ def money(amount):
     return f"\\${amount}"
 
 
-def apply_fix(recommendation):
-    """Save a recommendation's new prices when the host clicks Apply."""
-    st.session_state.price_changes.update(demand.fix_prices(recommendation))
-    st.session_state.applied_fix = recommendation
+def apply_fix(alert):
+    """Save an alert's new prices when the host clicks Apply."""
+    st.session_state.price_changes.update(demand.fix_prices(alert))
+    st.session_state.applied_fix = alert
 
 
 def save_edit(night, new_price):
@@ -45,7 +45,11 @@ def edit_price(night):
 def show_night(night):
     """Draw one calendar square. Return True if its Edit button was clicked."""
     with st.container(border=True, height="stretch"):
-        st.markdown(f"**{night.date.day}**")
+        # Orange marks the nights an alert wants to change.
+        if night.new_price:
+            st.markdown(f":orange[**{night.date.day}**]")
+        else:
+            st.markdown(f"**{night.date.day}**")
 
         if night.price != night.tool_price:
             st.markdown(f"{money(night.price)} ~~{money(night.tool_price)}~~")
@@ -88,16 +92,13 @@ st.session_state.setdefault("edit_log", [])
 st.session_state.setdefault("applied_fix", None)
 
 listing = demand.load_listing()
-base_price, history, events, calendar_2026 = demand.load_data()
-learned_events = demand.find_learned_events(history, events)
-all_recommendations = demand.find_recommendations(
-    calendar_2026, learned_events, base_price
-)
-recommendations = demand.pending_recommendations(
-    all_recommendations, st.session_state.price_changes
+data = demand.load_data()
+_, _, events, calendar_2026 = data
+alerts = demand.pending_alerts(
+    demand.find_missed_spikes(data), st.session_state.price_changes
 )
 view = demand.build_calendar_view(
-    calendar_2026, events, recommendations, st.session_state.price_changes
+    calendar_2026, events, alerts, st.session_state.price_changes
 )
 
 st.title("DemandLens")
@@ -113,21 +114,24 @@ if applied_fix:
         icon=":material/check_circle:",
     )
 
-for recommendation in recommendations:
+for alert in alerts:
+    days = ", ".join(f"{date.day}" for date in alert["dates"])
     st.warning(
-        f"Last December you raised {recommendation['raised_nights']} nights by "
-        f"{recommendation['raise_pct']:.0%} for this event, and your pricing tool "
-        f"missed it. Possible extra revenue: {money(recommendation['extra_revenue'])}.",
-        title=f"{recommendation['event_name']} is back and prices are still at base",
+        f"Last December you marked up {alert['fixed_nights']} nights by "
+        f"{alert['last_year_markup']:.0%} on average for this event. December {days} "
+        f"are open and still near base. Suggested markup: "
+        f"+{alert['suggested_markup']}%. "
+        f"Possible extra revenue: {money(alert['extra_revenue'])}.",
+        title=f"{alert['event_name']} is back and your pricing tool missed it again",
         icon=":material/lightbulb:",
     )
     st.button(
-        f"Apply fix to {len(recommendation['nights'])} nights",
-        key=f"apply_{recommendation['event_name']}",
+        f"Apply +{alert['suggested_markup']}%",
+        key=f"apply_{alert['event_name']}",
         icon=":material/bolt:",
         type="primary",
         on_click=apply_fix,
-        args=(recommendation,),
+        args=(alert,),
     )
 
 st.header("December 2026")

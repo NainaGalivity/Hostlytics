@@ -1,25 +1,23 @@
 """Detection logic for DemandLens.
 
-Learns from the host's past price changes, then finds the same missed event
-this year. The steps match the order of the functions below:
-
-1. Find the nights the host changed the tool's price.
-2. Keep the big raises that happened during a known event.
-3. Check if that event is back this year with prices still at base.
-4. Recommend new prices, using the raise the host chose last time.
+Learns from the host's manual fixes last December, then finds the same missed
+event this December. See find_missed_spikes for the steps.
 
 Run it with: python demand.py
+Test it with: python -m unittest
 """
 
+import math
 from pathlib import Path
 
 import pandas as pd
 
 DATA_DIR = Path(__file__).parent / "data"
 
-MIN_RAISE_PCT = 0.15  # Smaller changes are treated as noise.
-MIN_RAISED_NIGHTS = 2  # One raised night could be a coincidence.
-AT_BASE_TOLERANCE = 0.05  # Within 5% above base still counts as "at base".
+MIN_MARKUP = 0.20  # Smaller changes are treated as noise.
+MIN_RUN_NIGHTS = 2  # A single raised night could be a coincidence.
+NEAR_BASE_TOLERANCE = 0.10  # Within 10% of base counts as "still at base".
+MARKUP_STEP = 5  # Suggested markups go down in steps of 5%.
 
 
 def load_data():
@@ -41,97 +39,114 @@ def load_listing():
     return listing.loc[0].to_dict()
 
 
-def find_overrides(history):
-    """Return the nights where the host charged something other than the tool price."""
-    overrides = history[history["final_price"] != history["tool_price"]].copy()
-    overrides["change_pct"] = overrides["final_price"] / overrides["tool_price"] - 1
-    return overrides
+def find_manual_fixes(history):
+    """Return each run of consecutive nights the host marked up by hand."""
+    nights = history.assign(
+        markup=(history["final_price"] - history["tool_price"]) / history["tool_price"]
+    )
+    nights = nights[nights["markup"] >= MIN_MARKUP].sort_values("date")
+
+    # A new run starts on any night that doesn't directly follow the one before.
+    run_ids = (nights["date"].diff() != pd.Timedelta(days=1)).cumsum()
+    return [run for _, run in nights.groupby(run_ids) if len(run) >= MIN_RUN_NIGHTS]
 
 
-def find_learned_events(history, events):
-    """Return the events the host raised prices for by hand last year."""
-    overrides = find_overrides(history)
-    raises = overrides[overrides["change_pct"] >= MIN_RAISE_PCT]
+def round_down_markup(markup):
+    """Return a markup like 0.3996 as a whole percent rounded down, like 35."""
+    # round() stops tiny decimal errors from pushing an exact 40% down to 35%.
+    percent = round(markup * 100, 6)
+    return math.floor(percent / MARKUP_STEP) * MARKUP_STEP
 
-    learned = []
+
+def find_missed_spikes(data=None):
+    """Return an alert for each event the host fixed last year and the tool missed again.
+
+    1. Find the host's manual fixes, ignoring one-off changes.
+    2. Match those fixes to an event that overlapped them.
+    3. Find that event's nights in December 2026.
+    4. Keep the nights still near base that are open to reprice.
+    5. Build the alert, suggesting last year's markup rounded down.
+    """
+    base_price, history, events, calendar = data or load_data()
+    fixes = find_manual_fixes(history)
+
+    alerts = []
     for event in events.itertuples():
-        during_event = raises[raises["date"].between(event.start_2025, event.end_2025)]
-        if len(during_event) < MIN_RAISED_NIGHTS:
+        matching_fixes = [
+            run
+            for run in fixes
+            if run["date"].min() <= event.end_2025
+            and run["date"].max() >= event.start_2025
+        ]
+        if not matching_fixes:
             continue
 
-        learned.append(
-            {
-                "event_name": event.event_name,
-                "start_2026": event.start_2026,
-                "end_2026": event.end_2026,
-                "raise_pct": during_event["change_pct"].mean(),
-                "raised_nights": len(during_event),
-            }
-        )
-    return learned
+        this_year = calendar[calendar["date"].between(event.start_2026, event.end_2026)]
+        low = base_price * (1 - NEAR_BASE_TOLERANCE)
+        high = base_price * (1 + NEAR_BASE_TOLERANCE)
+        missed = this_year[this_year["tool_price"].between(low, high)]
 
-
-def find_recommendations(calendar, learned_events, base_price):
-    """Return one recommendation per learned event still priced near base."""
-    at_base_limit = base_price * (1 + AT_BASE_TOLERANCE)
-
-    recommendations = []
-    for event in learned_events:
-        in_event = calendar["date"].between(event["start_2026"], event["end_2026"])
-        at_base = calendar["tool_price"] <= at_base_limit
-        missed_nights = calendar[in_event & at_base]
-
-        # Booked nights can't be repriced, so only open nights get a new price.
-        open_nights = missed_nights[missed_nights["booked"] == "no"].copy()
-        booked_nights = missed_nights[missed_nights["booked"] == "yes"]
+        # Booked nights can't be repriced, so only open nights go in the alert.
+        open_nights = missed[missed["booked"] == "no"].copy()
         if open_nights.empty:
             continue
 
+        last_year = pd.concat(matching_fixes)
+        last_year_markup = last_year["markup"].mean()
+        suggested_markup = round_down_markup(last_year_markup)
         open_nights["new_price"] = (
-            (open_nights["tool_price"] * (1 + event["raise_pct"])).round().astype(int)
+            (open_nights["tool_price"] * (1 + suggested_markup / 100))
+            .round()
+            .astype(int)
         )
-        recommendations.append(
+        alerts.append(
             {
-                "event_name": event["event_name"],
-                "raise_pct": event["raise_pct"],
-                "raised_nights": event["raised_nights"],
+                "event_name": event.event_name,
+                "last_year_markup": last_year_markup,
+                "fixed_nights": len(last_year),
+                "dates": open_nights["date"].tolist(),
+                "suggested_markup": suggested_markup,
                 "nights": open_nights[["date", "tool_price", "new_price"]],
                 "extra_revenue": int(
                     (open_nights["new_price"] - open_nights["tool_price"]).sum()
                 ),
-                "booked_at_base": len(booked_nights),
             }
         )
-    return recommendations
+    return alerts
 
 
-def pending_recommendations(recommendations, price_changes):
-    """Return the recommendations without nights the host already changed."""
+def pending_alerts(alerts, price_changes):
+    """Return the alerts without nights the host already changed."""
     pending = []
-    for recommendation in recommendations:
-        nights = recommendation["nights"]
+    for alert in alerts:
+        nights = alert["nights"]
         nights = nights[~nights["date"].isin(list(price_changes))]
         if nights.empty:
             continue
 
         extra_revenue = int((nights["new_price"] - nights["tool_price"]).sum())
         pending.append(
-            {**recommendation, "nights": nights, "extra_revenue": extra_revenue}
+            {
+                **alert,
+                "nights": nights,
+                "dates": nights["date"].tolist(),
+                "extra_revenue": extra_revenue,
+            }
         )
     return pending
 
 
-def fix_prices(recommendation):
-    """Return the price changes that apply a recommendation in one click."""
+def fix_prices(alert):
+    """Return the price changes that apply an alert in one click."""
     return {
         night.date: {"price": int(night.new_price), "source": "fix"}
-        for night in recommendation["nights"].itertuples()
+        for night in alert["nights"].itertuples()
     }
 
 
 def describe_edit(change_pct, event):
     """Return what a hand edit might teach us."""
-    if abs(change_pct) < MIN_RAISE_PCT:
+    if abs(change_pct) < MIN_MARKUP:
         return "Small change, treated as noise"
 
     direction = "Raised" if change_pct > 0 else "Lowered"
@@ -152,10 +167,10 @@ def make_log_entry(night, new_price):
     }
 
 
-def build_calendar_view(calendar, events, recommendations, price_changes):
+def build_calendar_view(calendar, events, alerts, price_changes):
     """Return the calendar with each night's event and current price.
 
-    A new_price of 0 means there is no recommendation for that night.
+    A new_price of 0 means no alert wants to change that night.
     """
     view = calendar.copy()
 
@@ -165,8 +180,8 @@ def build_calendar_view(calendar, events, recommendations, price_changes):
         view.loc[in_event, "event"] = event.short_name
 
     new_prices = {}
-    for recommendation in recommendations:
-        for night in recommendation["nights"].itertuples():
+    for alert in alerts:
+        for night in alert["nights"].itertuples():
             new_prices[night.date] = night.new_price
     view["new_price"] = view["date"].map(new_prices).fillna(0).astype(int)
 
@@ -181,21 +196,18 @@ def build_calendar_view(calendar, events, recommendations, price_changes):
 
 
 def main():
-    base_price, history, events, calendar = load_data()
-    learned_events = find_learned_events(history, events)
-    recommendations = find_recommendations(calendar, learned_events, base_price)
+    alerts = find_missed_spikes()
 
-    print(f"Host changed {len(find_overrides(history))} nights last year.")
-    print(f"Found {len(recommendations)} recommendation(s).")
-    for recommendation in recommendations:
-        print(f"\n{recommendation['event_name']}")
+    print(f"Found {len(alerts)} alert(s).")
+    for alert in alerts:
+        print(f"\n{alert['event_name']}")
         print(
-            f"Host raised {recommendation['raised_nights']} nights "
-            f"by {recommendation['raise_pct']:.0%} last year."
+            f"Host marked up {alert['fixed_nights']} nights "
+            f"by {alert['last_year_markup']:.0%} on average last year."
         )
-        print(recommendation["nights"].to_string(index=False))
-        print(f"Possible extra revenue: ${recommendation['extra_revenue']}")
-        print(f"Already booked at base: {recommendation['booked_at_base']} night(s)")
+        print(f"Suggested markup: +{alert['suggested_markup']}%")
+        print(alert["nights"].to_string(index=False))
+        print(f"Possible extra revenue: ${alert['extra_revenue']}")
 
 
 if __name__ == "__main__":

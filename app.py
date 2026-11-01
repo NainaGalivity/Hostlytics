@@ -58,24 +58,8 @@ def reset_demo():
         st.session_state.pop(key, None)
 
 
-@st.dialog("Edit price")
-def edit_price(night):
-    st.markdown(f"**{night.date:%A, %B %-d}**")
-    new_price = st.number_input(
-        "New nightly price",
-        min_value=1,
-        max_value=10000,
-        value=int(night.price),
-        step=1,
-    )
-    if st.button("Save price", type="primary"):
-        if new_price != night.price:
-            save_edit(night, new_price)
-        st.rerun()
-
-
 def show_night(night):
-    """Draw one calendar square. Return True if its Edit button was clicked."""
+    """Draw one calendar square."""
     with st.container(border=True, height="stretch"):
         # Orange marks the nights an alert wants to change.
         if night.new_price:
@@ -93,9 +77,7 @@ def show_night(night):
 
         if night.booked == "yes":
             st.badge(night.guest_first_name, icon=":material/person:", color="gray")
-            return False
-
-        if night.change_source == "fix":
+        elif night.change_source == "fix":
             st.badge("Fix applied", icon=":material/check:", color="blue")
         elif night.change_source == "host":
             st.badge("Edited by you", icon=":material/edit:", color="violet")
@@ -107,13 +89,6 @@ def show_night(night):
             )
         else:
             st.badge("Open", color="green")
-
-        return st.button(
-            "Edit",
-            key=f"edit_{night.date.day}",
-            icon=":material/edit:",
-            type="tertiary",
-        )
 
 
 st.set_page_config(page_title="DemandLens", layout="wide")
@@ -176,18 +151,13 @@ for column, weekday in zip(weekday_columns, WEEKDAYS):
 nights_by_day = {night.date.day: night for night in view.itertuples()}
 weeks = calendar.Calendar(firstweekday=6).monthdayscalendar(YEAR, MONTH)
 
-night_to_edit = None
 for week in weeks:
     columns = st.columns(7, gap="xsmall", wrap=False)
     for column, day in zip(columns, week):
         if day == 0:  # A square from the month before or after.
             continue
         with column:
-            if show_night(nights_by_day[day]):
-                night_to_edit = nights_by_day[day]
-
-if night_to_edit:
-    edit_price(night_to_edit)
+            show_night(nights_by_day[day])
 
 st.header("Edit a price")
 

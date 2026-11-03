@@ -1,4 +1,4 @@
-"""Create the sample CSV files in data/ for the Hostlitics demo.
+"""Create the sample CSV files in data/ for the Hostlytics demo.
 
 Everything here is made up. Run it with: python make_mock_data.py
 """

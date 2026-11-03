@@ -1,4 +1,4 @@
-"""Detection logic for Hostlitics.
+"""Detection logic for Hostlytics.
 
 Learns from the host's manual fixes last December, then finds the same missed
 event this December. See find_missed_spikes for the steps.

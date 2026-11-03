@@ -1,4 +1,4 @@
-# Hostlitics
+# Hostlytics
 
 ## Product
 Pricing tools miss local demand spikes, so hosts fix prices by hand. We learn from those fixes automatically. We give short-term rental hosts personalized pricing recommendations with almost no setup.
